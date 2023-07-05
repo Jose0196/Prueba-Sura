@@ -3,60 +3,59 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 
-from openpyxl import Workbook
+def scrape_banco_general():
+    # URL del sitio web
+    url = 'https://www.superbancos.gob.pa/estadisticas-financieras/carta-bancaria/estadisticas-financieras'
 
-# URL de la página web
-url = "https://www.superbancos.gob.pa/estadisticas-financieras/carta-bancaria/estadisticas-financieras"
+    # Realizar la solicitud GET al sitio web
+    response = requests.get(url)
 
-# Headers de la solicitud HTTP
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/88.0.4324.182 Safari/537.36"
-}
+    # Crear objeto BeautifulSoup
+    soup = BeautifulSoup(response.content, 'html.parser')
 
-# Realizar solicitud HTTP GET a la página web
-response = requests.get(url, headers=headers)
+    # Encontrar el formulario para seleccionar el banco
+    form = soup.find('form', {'id': 'CartaBancaria'})
 
-# Crear objeto BeautifulSoup con el contenido HTML de la página web
-soup = BeautifulSoup(response.content, "html.parser")
+    # Obtener el token CSRF necesario para enviar la solicitud de búsqueda
+    csrf_token = form.find('input', {'name': 'csrfmiddlewaretoken'}).get('value')
 
-# Encontrar el formulario de búsqueda
-form = soup.find("form", {"id": "form"})
+    # Crear el payload para la solicitud POST
+    payload = {
+        'csrfmiddlewaretoken': csrf_token,
+        'envio_datos': 'true',
+        'formato': 'individual',
+        'banco': 'Banco General',
+        'datos': 'Activos',
+        'agrupacion': 'trimestral'
+    }
 
-# Obtener los parámetros necesarios para enviar la solicitud de descarga de datos
-viewstate = form.find("input", {"id": "__VIEWSTATE"})["value"]
-eventvalidation = form.find("input", {"id": "__EVENTVALIDATION"})["value"]
+    # Realizar la solicitud POST para obtener los datos
+    response = requests.post(url, data=payload)
 
-# Datos de búsqueda (segundo trimestre de 2021 hasta primer trimestre de 2023)
-data = {
-    "__EVENTTARGET": "",
-    "__EVENTARGUMENT": "",
-    "__LASTFOCUS": "",
-    "__VIEWSTATE": viewstate,
-    "__EVENTVALIDATION": eventvalidation,
-    "ctl00$contenido$ddlVista": "Carta Bancaria/Estadisticas Financieras",
-    "ctl00$contenido$ddlTipoEst": "2",
-    "ctl00$contenido$ddlTipoDesag": "3",
-    "ctl00$contenido$ddlBanco": "22",  # ID de Banco General en la lista de bancos
-    "ctl00$contenido$ddlMoneda": "T",
-    "ctl00$contenido$ddlIndicadores": "TAC",
-    "ctl00$contenido$ddlAnio": ["2021", "2022", "2023"],
-    "ctl00$contenido$ddlTrimestre": ["2", "3", "4", "1"],
-    "ctl00$contenido$btnBuscar": "Buscar"
-}
+    # Crear objeto BeautifulSoup para los datos obtenidos
+    soup = BeautifulSoup(response.content, 'html.parser')
 
-# Realizar solicitud HTTP POST para descargar los datos
-response = requests.post(url, headers=headers, data=data)
+    # Encontrar la tabla que contiene los datos
+    table = soup.find('table', {'class': 'responsive'})
 
-# Leer la respuesta como un archivo Excel utilizando pandas
-df = pd.read_excel(response.content, sheet_name="Respuesta")
+    # Leer la tabla en un DataFrame usando pandas
+    df = pd.read_html(str(table))[0]
 
-# Filtrar las columnas deseadas (Total de activos y Patrimonio total)
-df_filtered = df[["Fecha", "Total de activos", "Patrimonio total"]]
+    # Filtrar y formatear los datos
+    df = df[['Período', 'Total']].copy()
+    df['Período'] = pd.to_datetime(df['Período'], format='%d-%m-%Y')
+    df = df.set_index('Período')
+    df.columns = ['Total Activos']
 
-# Crear un nuevo archivo Excel con los datos filtrados
-output_file = "Salida.xlsx"
-with pd.ExcelWriter(output_file) as writer:
-    df_filtered.to_excel(writer, sheet_name="Datos", index=False)
+    return df
 
-# Imprimir mensaje de éxito
-print(f"Los datos se han extraído correctamente y se han guardado en el archivo '{output_file}'.")
+if __name__ == '__main__':
+    df = scrape_banco_general()
+
+    # Filtrar los datos para el rango de fechas deseado
+    start_date = pd.to_datetime('2021-04-01')
+    end_date = pd.to_datetime('2023-03-31')
+    df = df.loc[(df.index >= start_date) & (df.index <= end_date)]
+
+    # Guardar los datos en un archivo Excel
+    df.to_excel('salida.xlsx')
